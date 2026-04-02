@@ -15,8 +15,9 @@ type KeyMap struct {
 	ScrollDown key.Binding
 	HalfPageUp   key.Binding
 	HalfPageDown key.Binding
-	Quit       key.Binding
-	Help       key.Binding
+	Quit         key.Binding
+	Help         key.Binding
+	ToggleExpand key.Binding
 }
 
 var keys = KeyMap{
@@ -64,6 +65,10 @@ var keys = KeyMap{
 		key.WithKeys("ctrl+?"),
 		key.WithHelp("ctrl+?", "help"),
 	),
+	ToggleExpand: key.NewBinding(
+		key.WithKeys("tab"),
+		key.WithHelp("tab", "expand/collapse"),
+	),
 }
 
 // ShortHelp returns bindings shown in compact help bar.
@@ -77,6 +82,6 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		{k.Send, k.Newline, k.Abort},
 		{k.CycleModel, k.ClearChat},
 		{k.ScrollUp, k.ScrollDown, k.HalfPageUp, k.HalfPageDown},
-		{k.Quit, k.Help},
+		{k.Quit, k.Help, k.ToggleExpand},
 	}
 }

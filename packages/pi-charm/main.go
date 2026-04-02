@@ -93,9 +93,11 @@ type chatEntry struct {
 	role    string // user, assistant, tool_start, tool_end, thinking, error, info
 	content string
 	// tool_start / tool_end specifics
-	toolName  string
-	toolID    string
-	isError   bool
+	toolName   string
+	toolID     string
+	isError    bool
+	fullArgs   json.RawMessage // raw args for tool_start
+	fullResult json.RawMessage // raw result for tool_end
 }
 
 // ---------------------------------------------------------------------------
@@ -137,11 +139,21 @@ type model struct {
 	turnActive    bool
 	streamBuf     *strings.Builder
 	thinkBuf      *strings.Builder
-	activeTools   map[string]string // toolCallId -> toolName
-	mode          uiMode
+	activeTools    map[string]string // toolCallId -> toolName
+	toolsExpanded  bool              // toggle all tool entries expanded/collapsed
+	mode           uiMode
 	dialogReqID   string // pending extension_ui_request ID
 	quitting      bool
 	err           error
+
+	// Steering/follow-up queues (from queue_update events)
+	steeringQueue []string
+	followUpQueue []string
+
+	// Progress overlay
+	progressOverlay string // non-empty when overlay should show
+	isCompacting    bool
+	isRetrying      bool
 
 	// Toast notification (transient overlay)
 	toast      string // current toast text, empty when hidden
@@ -283,7 +295,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case key.Matches(msg, keys.Abort):
-			if m.streaming && m.client != nil {
+			if m.isCompacting || m.isRetrying {
+				if m.client != nil {
+					_ = m.client.Abort()
+				}
+				m.progressOverlay = ""
+				m.isCompacting = false
+				m.isRetrying = false
+				m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Cancelled"})
+				m.viewport.SetContent(m.renderChat())
+				m.viewport.GotoBottom()
+			} else if m.streaming && m.client != nil {
 				_ = m.client.Abort()
 				m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Aborted"})
 				m.viewport.SetContent(m.renderChat())
@@ -302,28 +324,46 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.SetContent("")
 			m.viewport.GotoBottom()
 
-		case key.Matches(msg, keys.Send):
-			if !m.streaming {
-				text := strings.TrimSpace(m.input.Value())
-				if text != "" {
-					m.input.Reset()
+		case key.Matches(msg, keys.ToggleExpand):
+			if !m.streaming && !m.acVisible && m.mode == modeChat {
+				m.toolsExpanded = !m.toolsExpanded
+				m.viewport.SetContent(m.renderChat())
+			}
 
-					// Handle built-in slash commands locally
+		case key.Matches(msg, keys.Send):
+			text := strings.TrimSpace(m.input.Value())
+			if text != "" {
+				m.input.Reset()
+
+				// Handle built-in slash commands locally (only when not streaming)
+				if !m.streaming {
 					if cmd, handled := m.handleSlashCommand(text); handled {
 						if cmd != nil {
 							cmds = append(cmds, cmd)
 						}
 						m.viewport.SetContent(m.renderChat())
 						m.viewport.GotoBottom()
-					} else {
-						m.chatLog = append(m.chatLog, chatEntry{role: "user", content: text})
-						m.streaming = true
-						m.streamBuf.Reset()
-						m.thinkBuf.Reset()
-						m.viewport.SetContent(m.renderChat())
-						m.viewport.GotoBottom()
-						cmds = append(cmds, doPrompt(m.client, text))
+						break
 					}
+				}
+
+				if m.streaming {
+					// During streaming, send as steer message
+					m.chatLog = append(m.chatLog, chatEntry{role: "user", content: "→ " + text})
+					m.viewport.SetContent(m.renderChat())
+					m.viewport.GotoBottom()
+					if m.client != nil {
+						_ = m.client.Steer(text)
+					}
+				} else {
+					// Normal prompt
+					m.chatLog = append(m.chatLog, chatEntry{role: "user", content: text})
+					m.streaming = true
+					m.streamBuf.Reset()
+					m.thinkBuf.Reset()
+					m.viewport.SetContent(m.renderChat())
+					m.viewport.GotoBottom()
+					cmds = append(cmds, doPrompt(m.client, text))
 				}
 			}
 		default:
@@ -345,6 +385,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.SetContent(m.renderChat())
 		m.viewport.GotoBottom()
 		cmds = append(cmds, waitForEvent(m.client))
+		// Dynamic placeholder
+		if m.streaming {
+			m.input.Placeholder = "Steer pi..."
+		} else {
+			m.input.Placeholder = "Message pi..."
+		}
 
 	case toastExpireMsg:
 		m.toast = ""
@@ -630,7 +676,11 @@ func (m model) View() string {
 	// Status line (streaming indicator + spinner + stopwatch + toast)
 	statusLine := ""
 	if m.streaming {
-		statusLine = th.StatusBar.Render(m.spinner.View() + " " + m.stopwatch.View() + " streaming...")
+		status := m.spinner.View() + " " + m.stopwatch.View() + " streaming..."
+		if qc := len(m.steeringQueue) + len(m.followUpQueue); qc > 0 {
+			status += fmt.Sprintf(" [%d queued]", qc)
+		}
+		statusLine = th.StatusBar.Render(status)
 	}
 	if m.toast != "" {
 		var toastStyle lipgloss.Style
@@ -666,11 +716,23 @@ func (m model) View() string {
 		inputArea = m.input.View()
 	}
 
+	// Progress overlay (compaction/retry)
+	viewportView := m.viewport.View()
+	if m.progressOverlay != "" {
+		overlayContent := m.spinner.View() + " " + m.progressOverlay + "\n\n" + th.HelpDesc.Render("Press Esc to cancel")
+		overlayBox := th.ProgressOverlay.Render(overlayContent)
+		viewportView = lipgloss.Place(
+			m.viewport.Width, m.viewport.Height,
+			lipgloss.Center, lipgloss.Center,
+			overlayBox,
+		)
+	}
+
 	return th.App.Render(
 		lipgloss.JoinVertical(lipgloss.Left,
 			header,
 			divider,
-			m.viewport.View(),
+			viewportView,
 			divider,
 			statusLine,
 			acView,
@@ -919,6 +981,8 @@ func (m *model) handleEvent(raw json.RawMessage) []tea.Cmd {
 		m.flushStream()
 		m.streaming = false
 		m.turnActive = false
+		m.steeringQueue = nil
+		m.followUpQueue = nil
 		cmds = append(cmds, m.stopwatch.Stop())
 
 	case "message_update":
@@ -942,6 +1006,7 @@ func (m *model) handleEvent(raw json.RawMessage) []tea.Cmd {
 			toolName: ev.ToolName,
 			toolID:   ev.ToolCallID,
 			content:  argSummary,
+			fullArgs: ev.Args,
 		})
 
 	case "tool_execution_end":
@@ -949,24 +1014,39 @@ func (m *model) handleEvent(raw json.RawMessage) []tea.Cmd {
 		delete(m.activeTools, ev.ToolCallID)
 		resultSummary := summarizeToolResult(ev.Result)
 		m.chatLog = append(m.chatLog, chatEntry{
-			role:     "tool_end",
-			toolName: name,
-			toolID:   ev.ToolCallID,
-			content:  resultSummary,
-			isError:  ev.IsError,
+			role:       "tool_end",
+			toolName:   name,
+			toolID:     ev.ToolCallID,
+			content:    resultSummary,
+			isError:    ev.IsError,
+			fullResult: ev.Result,
 		})
 
 	case "compaction_start":
+		m.isCompacting = true
+		m.progressOverlay = "Compacting context..."
 		m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Compacting context..."})
 
 	case "compaction_end":
+		m.isCompacting = false
+		m.progressOverlay = ""
 		m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Context compacted"})
 
 	case "auto_retry_start":
+		m.isRetrying = true
+		m.progressOverlay = fmt.Sprintf("Retrying (attempt %d/%d)...", ev.Attempt, ev.MaxAttempts)
 		m.chatLog = append(m.chatLog, chatEntry{
 			role:    "info",
 			content: fmt.Sprintf("Retrying (attempt %d/%d)...", ev.Attempt, ev.MaxAttempts),
 		})
+
+	case "auto_retry_end":
+		m.isRetrying = false
+		m.progressOverlay = ""
+
+	case "queue_update":
+		m.steeringQueue = ev.Steering
+		m.followUpQueue = ev.FollowUp
 
 	case "extension_ui_request":
 		var uiReq rpc.ExtensionUIRequest
@@ -1197,12 +1277,21 @@ func (m *model) renderChat() string {
 			sb.WriteString(th.AssistantBlock.Width(blockWidth).Render(label + "\n" + body) + "\n")
 
 		case "thinking":
-			lines := strings.Split(entry.content, "\n")
-			preview := lines[0]
-			if len(preview) > 80 {
-				preview = preview[:77] + "..."
+			if m.toolsExpanded {
+				sb.WriteString(th.ThinkingText.Render("thinking:") + "\n")
+				sb.WriteString(th.ToolBox.Render(entry.content) + "\n")
+			} else {
+				lines := strings.Split(entry.content, "\n")
+				preview := lines[0]
+				if len(preview) > 80 {
+					preview = preview[:77] + "..."
+				}
+				indicator := ""
+				if len(lines) > 1 || len(entry.content) > 80 {
+					indicator = " [+]"
+				}
+				sb.WriteString(th.ThinkingText.Render("thinking: "+preview+indicator) + "\n")
 			}
-			sb.WriteString(th.ThinkingText.Render("thinking: "+preview) + "\n")
 
 		case "tool_start":
 			icon := toolIcon(entry.toolName)
@@ -1211,6 +1300,15 @@ func (m *model) renderChat() string {
 				line += " " + th.ToolArg.Render(entry.content)
 			}
 			sb.WriteString(th.ToolRunning.Render(line) + "\n")
+			if m.toolsExpanded && entry.fullArgs != nil {
+				var pretty interface{}
+				if json.Unmarshal(entry.fullArgs, &pretty) == nil {
+					formatted, err := json.MarshalIndent(pretty, "    ", "  ")
+					if err == nil {
+						sb.WriteString(th.ToolBox.Render(string(formatted)) + "\n")
+					}
+				}
+			}
 
 		case "tool_end":
 			style := th.ToolDone
@@ -1224,6 +1322,27 @@ func (m *model) renderChat() string {
 				line += " " + entry.content
 			}
 			sb.WriteString(style.Render("  "+line) + "\n")
+			if m.toolsExpanded && entry.fullResult != nil {
+				var resultStr string
+				if json.Unmarshal(entry.fullResult, &resultStr) == nil {
+					if len(resultStr) > 500 {
+						resultStr = resultStr[:497] + "..."
+					}
+					sb.WriteString(th.ToolBox.Render(resultStr) + "\n")
+				} else {
+					var pretty interface{}
+					if json.Unmarshal(entry.fullResult, &pretty) == nil {
+						formatted, err := json.MarshalIndent(pretty, "    ", "  ")
+						if err == nil {
+							out := string(formatted)
+							if len(out) > 500 {
+								out = out[:497] + "..."
+							}
+							sb.WriteString(th.ToolBox.Render(out) + "\n")
+						}
+					}
+				}
+			}
 
 		case "error":
 			sb.WriteString(th.ErrorText.Render("error: "+entry.content) + "\n")

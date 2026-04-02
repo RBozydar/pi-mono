@@ -201,6 +201,11 @@ func (c *Client) CycleThinkingLevel() (*Response, error) {
 	return c.Send(Command{Type: "cycle_thinking_level"})
 }
 
+// FollowUp queues a follow-up message for after the agent finishes.
+func (c *Client) FollowUp(message string) error {
+	return c.SendAsync(Command{Type: "follow_up", Message: message})
+}
+
 // Steer sends a steering message to interrupt the agent mid-run.
 func (c *Client) Steer(message string) error {
 	return c.SendAsync(Command{Type: "steer", Message: message})
