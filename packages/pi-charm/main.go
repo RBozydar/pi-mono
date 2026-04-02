@@ -67,6 +67,11 @@ func (i modelItem) Title() string       { return i.provider + "/" + i.modelID }
 func (i modelItem) Description() string { return i.provider }
 func (i modelItem) FilterValue() string { return i.provider + "/" + i.modelID }
 
+type commandsMsg struct {
+	cmds []slashCmd
+	err  error
+}
+
 type exportMsg struct {
 	path string
 	err  error
@@ -142,6 +147,12 @@ type model struct {
 	toast      string // current toast text, empty when hidden
 	toastLevel string // "info", "warning", "error"
 
+	// Autocomplete state
+	acMatches      []slashCmd // filtered matches
+	acSelected     int        // selected index
+	acVisible      bool       // whether autocomplete is showing
+	extensionCmds  []slashCmd // fetched from RPC get_commands
+
 	// Session info (from get_state)
 	modelName     string
 	thinkingLevel string
@@ -208,6 +219,7 @@ func (m model) Init() tea.Cmd {
 		waitForEvent(m.client),
 		waitForDone(m.client),
 		fetchState(m.client),
+		doFetchCommands(m.client),
 	)
 }
 
@@ -230,6 +242,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Handle autocomplete navigation when visible
+		if m.acVisible && !m.streaming {
+			switch msg.String() {
+			case "tab", "enter":
+				if m.acSelected < len(m.acMatches) {
+					selected := m.acMatches[m.acSelected]
+					m.input.SetValue("/" + selected.name)
+					// Move cursor to end
+					m.input.CursorEnd()
+				}
+				m.acVisible = false
+				m.acMatches = nil
+				// If it was Tab, don't also send — let user add args or press Enter again
+				if msg.String() == "tab" {
+					m.updateAutocomplete()
+					return m, nil
+				}
+				// For Enter, fall through to the existing Send handler
+			case "up":
+				if m.acSelected > 0 {
+					m.acSelected--
+				}
+				return m, nil
+			case "down":
+				if m.acSelected < len(m.acMatches)-1 {
+					m.acSelected++
+				}
+				return m, nil
+			case "esc":
+				m.acVisible = false
+				m.acMatches = nil
+				return m, nil
+			}
+		}
+
 		switch {
 		case key.Matches(msg, keys.Quit):
 			m.quitting = true
@@ -284,6 +331,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
 			cmds = append(cmds, cmd)
+			m.updateAutocomplete()
 		}
 
 	case tea.WindowSizeMsg:
@@ -311,6 +359,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chatLog = append(m.chatLog, chatEntry{role: "error", content: msg.err.Error()})
 		m.viewport.SetContent(m.renderChat())
 		m.viewport.GotoBottom()
+
+	case commandsMsg:
+		if msg.err == nil {
+			m.extensionCmds = msg.cmds
+		}
 
 	case stateMsg:
 		if msg.state != nil {
@@ -600,6 +653,9 @@ func (m model) View() string {
 	// Help bar
 	helpView := m.help.View(keys)
 
+	// Autocomplete popup (shown above input when typing "/")
+	acView := m.renderAutocomplete()
+
 	// Dialog overlay or input
 	var inputArea string
 	if m.mode == modeDialog && m.dialog != nil {
@@ -617,6 +673,7 @@ func (m model) View() string {
 			m.viewport.View(),
 			divider,
 			statusLine,
+			acView,
 			inputArea,
 			helpView,
 		),
@@ -686,6 +743,27 @@ func dismissToast(d time.Duration) tea.Cmd {
 // ---------------------------------------------------------------------------
 // Slash command handling
 // ---------------------------------------------------------------------------
+
+// slashCmd describes a slash command for autocomplete display.
+type slashCmd struct {
+	name string
+	desc string
+}
+
+// slashCommands lists all built-in slash commands shown in autocomplete.
+var slashCommands = []slashCmd{
+	{"clear", "Clear chat history"},
+	{"model", "Open model picker"},
+	{"new", "Start new session"},
+	{"compact", "Compact session context"},
+	{"name", "Set session name"},
+	{"export", "Export session to HTML"},
+	{"copy", "Copy last assistant message"},
+	{"session", "Show session stats"},
+	{"hotkeys", "Show keyboard shortcuts"},
+	{"quit", "Quit pi-charm"},
+	{"help", "Show available commands"},
+}
 
 // handleSlashCommand intercepts built-in slash commands that RPC mode doesn't
 // handle. Returns (cmd, true) if handled, (nil, false) to pass through to pi.
@@ -763,6 +841,60 @@ func (m *model) handleSlashCommand(text string) (tea.Cmd, bool) {
 
 	// Not a known built-in — pass through to pi (could be an extension command)
 	return nil, false
+}
+
+// updateAutocomplete refreshes the autocomplete matches based on current input.
+func (m *model) updateAutocomplete() {
+	text := m.input.Value()
+	if !strings.HasPrefix(text, "/") || strings.Contains(text, " ") {
+		m.acVisible = false
+		m.acMatches = nil
+		m.acSelected = 0
+		return
+	}
+
+	prefix := strings.TrimPrefix(text, "/")
+	var matches []slashCmd
+	// Built-in commands first
+	for _, cmd := range slashCommands {
+		if strings.HasPrefix(cmd.name, prefix) {
+			matches = append(matches, cmd)
+		}
+	}
+	// Extension commands
+	for _, cmd := range m.extensionCmds {
+		if strings.HasPrefix(cmd.name, prefix) {
+			matches = append(matches, cmd)
+		}
+	}
+
+	m.acMatches = matches
+	m.acVisible = len(matches) > 0
+	if m.acSelected >= len(matches) {
+		m.acSelected = max(len(matches)-1, 0)
+	}
+}
+
+// renderAutocomplete renders the autocomplete popup as styled text.
+func (m *model) renderAutocomplete() string {
+	if !m.acVisible || len(m.acMatches) == 0 {
+		return ""
+	}
+
+	th := m.theme
+	var sb strings.Builder
+	for i, cmd := range m.acMatches {
+		name := "/" + cmd.name
+		desc := cmd.desc
+		if i == m.acSelected {
+			// Highlighted item
+			sb.WriteString(th.BadgeVal.Render(name) + " " + th.HelpDesc.Render(desc))
+		} else {
+			sb.WriteString(th.HelpKey.Render(name) + " " + th.HelpDesc.Render(desc))
+		}
+		sb.WriteString("\n")
+	}
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 // ---------------------------------------------------------------------------
@@ -1211,6 +1343,35 @@ func summarizeToolResult(raw json.RawMessage) string {
 // ---------------------------------------------------------------------------
 // Tea commands (async)
 // ---------------------------------------------------------------------------
+
+func doFetchCommands(client *rpc.Client) tea.Cmd {
+	if client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		resp, err := client.Send(rpc.Command{Type: "get_commands"})
+		if err != nil {
+			return commandsMsg{err: err}
+		}
+		if !resp.Success {
+			return commandsMsg{err: fmt.Errorf("%s", resp.Error)}
+		}
+		var data struct {
+			Commands []struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+			} `json:"commands"`
+		}
+		if json.Unmarshal(resp.Data, &data) != nil {
+			return commandsMsg{}
+		}
+		var cmds []slashCmd
+		for _, c := range data.Commands {
+			cmds = append(cmds, slashCmd{name: c.Name, desc: c.Description})
+		}
+		return commandsMsg{cmds: cmds}
+	}
+}
 
 func waitForEvent(client *rpc.Client) tea.Cmd {
 	if client == nil {
