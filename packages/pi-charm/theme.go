@@ -50,20 +50,23 @@ type Theme struct {
 	ToastInfo    lipgloss.Style
 	ToastWarning lipgloss.Style
 	ToastError   lipgloss.Style
+
+	// Progress overlay (compaction/retry)
+	ProgressOverlay lipgloss.Style
 }
 
 // Adaptive palette — picks correct color for light vs dark terminal.
 var (
-	subtle  = lipgloss.AdaptiveColor{Light: "250", Dark: "238"}
-	dimText = lipgloss.AdaptiveColor{Light: "247", Dark: "243"}
-	text    = lipgloss.AdaptiveColor{Light: "235", Dark: "252"}
-	accent  = lipgloss.AdaptiveColor{Light: "63", Dark: "205"}
+	subtle    = lipgloss.AdaptiveColor{Light: "250", Dark: "238"}
+	dimText   = lipgloss.AdaptiveColor{Light: "247", Dark: "243"}
+	text      = lipgloss.AdaptiveColor{Light: "235", Dark: "252"}
+	accent    = lipgloss.AdaptiveColor{Light: "63", Dark: "205"}
 	accentDim = lipgloss.AdaptiveColor{Light: "105", Dark: "170"}
-	blue    = lipgloss.AdaptiveColor{Light: "33", Dark: "39"}
-	green   = lipgloss.AdaptiveColor{Light: "34", Dark: "78"}
-	red     = lipgloss.AdaptiveColor{Light: "160", Dark: "196"}
-	yellow  = lipgloss.AdaptiveColor{Light: "136", Dark: "220"}
-	bgDim   = lipgloss.AdaptiveColor{Light: "254", Dark: "236"}
+	blue      = lipgloss.AdaptiveColor{Light: "33", Dark: "39"}
+	green     = lipgloss.AdaptiveColor{Light: "34", Dark: "78"}
+	red       = lipgloss.AdaptiveColor{Light: "160", Dark: "196"}
+	yellow    = lipgloss.AdaptiveColor{Light: "136", Dark: "220"}
+	bgDim     = lipgloss.AdaptiveColor{Light: "254", Dark: "236"}
 )
 
 func newTheme() Theme {
@@ -193,6 +196,13 @@ func newTheme() Theme {
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(red).
 			Padding(0, 1),
+
+		ProgressOverlay: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(yellow).
+			Padding(1, 3).
+			Foreground(text).
+			Align(lipgloss.Center),
 	}
 }
 

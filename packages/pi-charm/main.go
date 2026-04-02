@@ -107,9 +107,9 @@ type chatEntry struct {
 type uiMode int
 
 const (
-	modeChat    uiMode = iota // normal chat input
-	modeDialog                // extension UI dialog overlay
-	modePicker                // model picker overlay
+	modeChat   uiMode = iota // normal chat input
+	modeDialog               // extension UI dialog overlay
+	modePicker               // model picker overlay
 )
 
 // ---------------------------------------------------------------------------
@@ -139,9 +139,9 @@ type model struct {
 	turnActive    bool
 	streamBuf     *strings.Builder
 	thinkBuf      *strings.Builder
-	activeTools    map[string]string // toolCallId -> toolName
-	toolsExpanded  bool              // toggle all tool entries expanded/collapsed
-	mode           uiMode
+	activeTools   map[string]string // toolCallId -> toolName
+	toolsExpanded bool              // toggle all tool entries expanded/collapsed
+	mode          uiMode
 	dialogReqID   string // pending extension_ui_request ID
 	quitting      bool
 	err           error
@@ -160,10 +160,10 @@ type model struct {
 	toastLevel string // "info", "warning", "error"
 
 	// Autocomplete state
-	acMatches      []slashCmd // filtered matches
-	acSelected     int        // selected index
-	acVisible      bool       // whether autocomplete is showing
-	extensionCmds  []slashCmd // fetched from RPC get_commands
+	acMatches     []slashCmd // filtered matches
+	acSelected    int        // selected index
+	acVisible     bool       // whether autocomplete is showing
+	extensionCmds []slashCmd // fetched from RPC get_commands
 
 	// Session info (from get_state)
 	modelName     string
@@ -171,8 +171,8 @@ type model struct {
 	sessionName   string
 
 	// Glamour renderer (cached per width)
-	glamourWidth  int
-	glamour       *glamour.TermRenderer
+	glamourWidth int
+	glamour      *glamour.TermRenderer
 }
 
 func initialModel(client *rpc.Client) model {
@@ -1274,7 +1274,7 @@ func (m *model) renderChat() string {
 			} else {
 				body = th.AssistantText.Render(entry.content)
 			}
-			sb.WriteString(th.AssistantBlock.Width(blockWidth).Render(label + "\n" + body) + "\n")
+			sb.WriteString(th.AssistantBlock.Width(blockWidth).Render(label+"\n"+body) + "\n")
 
 		case "thinking":
 			if m.toolsExpanded {
@@ -1377,7 +1377,7 @@ func (m *model) renderChat() string {
 			} else {
 				body = th.AssistantText.Render(text)
 			}
-			sb.WriteString(th.AssistantBlock.Width(blockWidth).Render(label + "\n" + body) + "\n")
+			sb.WriteString(th.AssistantBlock.Width(blockWidth).Render(label+"\n"+body) + "\n")
 		}
 	}
 

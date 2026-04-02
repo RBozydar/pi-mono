@@ -17,7 +17,7 @@ type Command struct {
 	Type string `json:"type"`
 
 	// prompt / steer / follow_up
-	Message          string `json:"message,omitempty"`
+	Message           string `json:"message,omitempty"`
 	StreamingBehavior string `json:"streamingBehavior,omitempty"`
 
 	// set_model
@@ -71,18 +71,18 @@ type Response struct {
 
 // SessionState mirrors RpcSessionState from the TypeScript types.
 type SessionState struct {
-	Model                  *ModelInfo `json:"model,omitempty"`
-	ThinkingLevel          string     `json:"thinkingLevel"`
-	IsStreaming            bool       `json:"isStreaming"`
-	IsCompacting           bool       `json:"isCompacting"`
-	SteeringMode           string     `json:"steeringMode"`
-	FollowUpMode           string     `json:"followUpMode"`
-	SessionFile            string     `json:"sessionFile,omitempty"`
-	SessionID              string     `json:"sessionId"`
-	SessionName            string     `json:"sessionName,omitempty"`
-	AutoCompactionEnabled  bool       `json:"autoCompactionEnabled"`
-	MessageCount           int        `json:"messageCount"`
-	PendingMessageCount    int        `json:"pendingMessageCount"`
+	Model                 *ModelInfo `json:"model,omitempty"`
+	ThinkingLevel         string     `json:"thinkingLevel"`
+	IsStreaming           bool       `json:"isStreaming"`
+	IsCompacting          bool       `json:"isCompacting"`
+	SteeringMode          string     `json:"steeringMode"`
+	FollowUpMode          string     `json:"followUpMode"`
+	SessionFile           string     `json:"sessionFile,omitempty"`
+	SessionID             string     `json:"sessionId"`
+	SessionName           string     `json:"sessionName,omitempty"`
+	AutoCompactionEnabled bool       `json:"autoCompactionEnabled"`
+	MessageCount          int        `json:"messageCount"`
+	PendingMessageCount   int        `json:"pendingMessageCount"`
 }
 
 // ModelInfo represents an LLM model.
@@ -125,40 +125,39 @@ type Event struct {
 	PartialResult json.RawMessage `json:"partialResult,omitempty"`
 
 	// compaction_start, compaction_end
-	Reason       string `json:"reason,omitempty"`
+	Reason string `json:"reason,omitempty"`
 	// Note: compaction result also lands in Result (same JSON key, different event type)
 	Aborted      bool   `json:"aborted,omitempty"`
 	WillRetry    bool   `json:"willRetry,omitempty"`
 	ErrorMessage string `json:"errorMessage,omitempty"`
 
 	// auto_retry_start, auto_retry_end
-	Attempt     int  `json:"attempt,omitempty"`
-	MaxAttempts int  `json:"maxAttempts,omitempty"`
-	DelayMs     int  `json:"delayMs,omitempty"`
-	Success     bool `json:"success,omitempty"`
+	Attempt     int    `json:"attempt,omitempty"`
+	MaxAttempts int    `json:"maxAttempts,omitempty"`
+	DelayMs     int    `json:"delayMs,omitempty"`
+	Success     bool   `json:"success,omitempty"`
 	FinalError  string `json:"finalError,omitempty"`
 
 	// queue_update
 	Steering []string `json:"steering,omitempty"`
 	FollowUp []string `json:"followUp,omitempty"`
-
 }
 
 // ExtensionUIRequest is emitted when an extension needs user input.
 // Parsed separately from Event because "message" field conflicts.
 type ExtensionUIRequest struct {
-	Type       string   `json:"type"`
-	ID         string   `json:"id"`
-	Method     string   `json:"method"`
-	Title      string   `json:"title,omitempty"`
-	Options    []string `json:"options,omitempty"`
-	Message    string   `json:"message,omitempty"`
-	NotifyType string   `json:"notifyType,omitempty"`
-	StatusKey  string   `json:"statusKey,omitempty"`
-	StatusText string   `json:"statusText,omitempty"`
-	Timeout    int      `json:"timeout,omitempty"`
-	Prefill    string   `json:"prefill,omitempty"`
-	Placeholder string  `json:"placeholder,omitempty"`
+	Type        string   `json:"type"`
+	ID          string   `json:"id"`
+	Method      string   `json:"method"`
+	Title       string   `json:"title,omitempty"`
+	Options     []string `json:"options,omitempty"`
+	Message     string   `json:"message,omitempty"`
+	NotifyType  string   `json:"notifyType,omitempty"`
+	StatusKey   string   `json:"statusKey,omitempty"`
+	StatusText  string   `json:"statusText,omitempty"`
+	Timeout     int      `json:"timeout,omitempty"`
+	Prefill     string   `json:"prefill,omitempty"`
+	Placeholder string   `json:"placeholder,omitempty"`
 }
 
 // AgentMessage represents a message in the conversation.
@@ -177,11 +176,11 @@ type AssistantMessageEvent struct {
 
 // ContentBlock is one block within a message's content array.
 type ContentBlock struct {
-	Type     string `json:"type"`
-	Text     string `json:"text,omitempty"`
-	Thinking string `json:"thinking,omitempty"`
-	Name     string `json:"name,omitempty"`
-	ID       string `json:"id,omitempty"`
+	Type     string          `json:"type"`
+	Text     string          `json:"text,omitempty"`
+	Thinking string          `json:"thinking,omitempty"`
+	Name     string          `json:"name,omitempty"`
+	ID       string          `json:"id,omitempty"`
 	Input    json.RawMessage `json:"input,omitempty"`
 }
 

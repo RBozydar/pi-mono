@@ -6,13 +6,13 @@ import (
 
 // KeyMap defines all keyboard shortcuts for the TUI.
 type KeyMap struct {
-	Send       key.Binding
-	Newline    key.Binding
-	Abort      key.Binding
-	CycleModel key.Binding
-	ClearChat  key.Binding
-	ScrollUp   key.Binding
-	ScrollDown key.Binding
+	Send         key.Binding
+	Newline      key.Binding
+	Abort        key.Binding
+	CycleModel   key.Binding
+	ClearChat    key.Binding
+	ScrollUp     key.Binding
+	ScrollDown   key.Binding
 	HalfPageUp   key.Binding
 	HalfPageDown key.Binding
 	Quit         key.Binding

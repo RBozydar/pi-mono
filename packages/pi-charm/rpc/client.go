@@ -18,12 +18,12 @@ type Client struct {
 	stdout io.ReadCloser
 	stderr io.ReadCloser
 
-	events   chan json.RawMessage // raw events forwarded to consumer
-	pending  map[string]chan *Response
-	mu       sync.Mutex
-	reqID    atomic.Int64
-	done     chan struct{}
-	wg       sync.WaitGroup
+	events  chan json.RawMessage // raw events forwarded to consumer
+	pending map[string]chan *Response
+	mu      sync.Mutex
+	reqID   atomic.Int64
+	done    chan struct{}
+	wg      sync.WaitGroup
 
 	stderrMu  sync.Mutex
 	stderrBuf []byte
