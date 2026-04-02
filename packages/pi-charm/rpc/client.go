@@ -229,6 +229,21 @@ func (c *Client) GetAvailableModels() ([]ModelInfo, error) {
 	return data.Models, nil
 }
 
+// ExportHTML exports the session to an HTML file.
+func (c *Client) ExportHTML(outputPath string) (*Response, error) {
+	return c.Send(Command{Type: "export_html", OutputPath: outputPath})
+}
+
+// GetLastAssistantText returns the last assistant message text.
+func (c *Client) GetLastAssistantText() (*Response, error) {
+	return c.Send(Command{Type: "get_last_assistant_text"})
+}
+
+// GetSessionStats returns session statistics.
+func (c *Client) GetSessionStats() (*Response, error) {
+	return c.Send(Command{Type: "get_session_stats"})
+}
+
 // Close terminates the pi process and waits for goroutines to finish.
 func (c *Client) Close() error {
 	c.stdin.Close()
