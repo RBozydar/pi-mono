@@ -5,16 +5,16 @@ Built-in slash commands from Pi's interactive mode vs RPC availability.
 | Slash Command | RPC Command | pi-charm Status |
 |---|---|---|
 | `/settings` | -- | No RPC equivalent |
-| `/model` | `cycle_model`, `set_model`, `get_available_models` | Partial (cycles only, needs picker) |
+| `/model` | `cycle_model`, `set_model`, `get_available_models` | Done (picker overlay via Ctrl+P) |
 | `/scoped-models` | -- | No RPC equivalent |
-| `/export` | `export_html` | Available, not implemented |
+| `/export` | `export_html` | Done |
 | `/import` | -- | No RPC equivalent |
 | `/share` | -- | No RPC equivalent |
-| `/copy` | `get_last_assistant_text` | Available, not implemented |
+| `/copy` | `get_last_assistant_text` | Done |
 | `/name` | `set_session_name` | Done |
-| `/session` | `get_session_stats` | Available, not implemented |
+| `/session` | `get_session_stats` | Done |
 | `/changelog` | -- | No RPC equivalent |
-| `/hotkeys` | -- | Local (show own keybindings) |
+| `/hotkeys` | -- | Done (local) |
 | `/fork` | `fork`, `get_fork_messages` | Available, needs message picker UI |
 | `/tree` | `switch_session` | Available, needs session tree UI |
 | `/login` | -- | No RPC equivalent |
@@ -27,10 +27,8 @@ Built-in slash commands from Pi's interactive mode vs RPC availability.
 
 ## Categories
 
-**Done (4):** `/name`, `/new`, `/compact`, `/quit`
+**Done (10):** `/name`, `/new`, `/compact`, `/quit`, `/model`, `/export`, `/copy`, `/session`, `/hotkeys`, `/help`
 
-**Easy to add — RPC exists, minimal UI (5):** `/export`, `/copy`, `/session`, `/hotkeys`, `/help`
-
-**Needs picker UI — RPC exists (3):** `/model` (proper picker), `/fork`, `/tree`/`/resume`
+**Needs picker UI — RPC exists (3):** `/fork`, `/tree`/`/resume`
 
 **No RPC equivalent (8):** `/settings`, `/scoped-models`, `/import`, `/share`, `/login`, `/logout`, `/changelog`, `/reload`

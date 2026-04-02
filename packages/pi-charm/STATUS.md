@@ -56,10 +56,13 @@ pi-charm/
 - [x] **Lip Gloss message borders** — rounded borders on user/assistant blocks
 - [x] **Notification toasts** — transient overlays for setStatus/notify with auto-dismiss
 - [x] **Custom huh theme** — adaptive palette matching pi-charm theme
+- [x] **Bubbles list model picker** — filterable overlay via Ctrl+P or /model, set_model RPC
+- [x] **Slash commands** — /export /copy /session /hotkeys /clear /new /compact /name /quit /help
+- [x] **Go review fixes** — Builder pointer, huh Init, nil guards, WaitGroup, SendAsync cleanup
+- [x] **Unit tests** — 18 tests covering model, events, rendering, helpers
 
 ## Planned
 
-- [ ] Bubbles list for model picker overlay (Ctrl+Shift+P style)
 - [ ] Huh input for inline steer/follow-up during streaming
 - [ ] Bubbles progress for compaction/retry progress
 - [ ] Lip Gloss table layout for structured tool args

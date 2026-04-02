@@ -6,11 +6,13 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/stopwatch"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -44,6 +46,40 @@ type toastMsg struct {
 }
 type toastExpireMsg struct{}
 
+type modelsListMsg struct {
+	models []rpc.ModelInfo
+	err    error
+}
+
+type setModelMsg struct {
+	provider string
+	modelID  string
+	err      error
+}
+
+// modelItem implements list.Item for the model picker.
+type modelItem struct {
+	provider string
+	modelID  string
+}
+
+func (i modelItem) Title() string       { return i.provider + "/" + i.modelID }
+func (i modelItem) Description() string { return i.provider }
+func (i modelItem) FilterValue() string { return i.provider + "/" + i.modelID }
+
+type exportMsg struct {
+	path string
+	err  error
+}
+type copyMsg struct {
+	text string
+	err  error
+}
+type sessionStatsMsg struct {
+	stats string
+	err   error
+}
+
 // ---------------------------------------------------------------------------
 // Chat entry
 // ---------------------------------------------------------------------------
@@ -66,6 +102,7 @@ type uiMode int
 const (
 	modeChat    uiMode = iota // normal chat input
 	modeDialog                // extension UI dialog overlay
+	modePicker                // model picker overlay
 )
 
 // ---------------------------------------------------------------------------
@@ -82,7 +119,8 @@ type model struct {
 	spinner   spinner.Model
 	stopwatch stopwatch.Model
 	help      help.Model
-	dialog    *huh.Form // active extension UI dialog, if any
+	dialog    *huh.Form  // active extension UI dialog, if any
+	picker    list.Model // model picker list
 
 	// Layout
 	width, height int
@@ -185,6 +223,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateDialog(msg)
 	}
 
+	// If the model picker is active, route messages there
+	if m.mode == modePicker {
+		return m.updatePicker(msg)
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch {
@@ -204,7 +247,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, keys.CycleModel):
 			if !m.streaming {
-				cmds = append(cmds, doCycleModel(m.client))
+				cmds = append(cmds, doFetchModels(m.client))
 			}
 
 		case key.Matches(msg, keys.ClearChat):
@@ -286,6 +329,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.GotoBottom()
 		}
 
+	case modelsListMsg:
+		if msg.err != nil {
+			m.chatLog = append(m.chatLog, chatEntry{role: "error", content: "Failed to fetch models: " + msg.err.Error()})
+			m.viewport.SetContent(m.renderChat())
+			m.viewport.GotoBottom()
+		} else {
+			items := make([]list.Item, len(msg.models))
+			for i, mdl := range msg.models {
+				items[i] = modelItem{provider: mdl.Provider, modelID: mdl.ID}
+			}
+			delegate := list.NewDefaultDelegate()
+			m.picker = list.New(items, delegate, m.width-4, m.height-6)
+			m.picker.Title = "Select Model"
+			m.picker.SetShowStatusBar(true)
+			m.picker.SetFilteringEnabled(true)
+			m.picker.SetShowHelp(true)
+			m.mode = modePicker
+		}
+
+	case setModelMsg:
+		if msg.err != nil {
+			m.chatLog = append(m.chatLog, chatEntry{role: "error", content: "Set model failed: " + msg.err.Error()})
+		} else {
+			m.modelName = msg.provider + "/" + msg.modelID
+			m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Switched to " + m.modelName})
+		}
+		m.viewport.SetContent(m.renderChat())
+		m.viewport.GotoBottom()
+
 	case newSessionMsg:
 		m.chatLog = nil
 		m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "New session started"})
@@ -305,6 +377,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionNameMsg:
 		m.sessionName = msg.name
 		m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Session named: " + msg.name})
+		m.viewport.SetContent(m.renderChat())
+		m.viewport.GotoBottom()
+
+	case exportMsg:
+		if msg.err != nil {
+			m.chatLog = append(m.chatLog, chatEntry{role: "error", content: "Export failed: " + msg.err.Error()})
+		} else {
+			m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Exported to " + msg.path})
+		}
+		m.viewport.SetContent(m.renderChat())
+		m.viewport.GotoBottom()
+
+	case copyMsg:
+		if msg.err != nil {
+			m.chatLog = append(m.chatLog, chatEntry{role: "error", content: "Copy failed: " + msg.err.Error()})
+		} else if msg.text != "" {
+			m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Copied last message to clipboard"})
+		} else {
+			m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "No assistant message to copy"})
+		}
+		m.viewport.SetContent(m.renderChat())
+		m.viewport.GotoBottom()
+
+	case sessionStatsMsg:
+		if msg.err != nil {
+			m.chatLog = append(m.chatLog, chatEntry{role: "error", content: "Stats failed: " + msg.err.Error()})
+		} else {
+			m.chatLog = append(m.chatLog, chatEntry{role: "info", content: msg.stats})
+		}
 		m.viewport.SetContent(m.renderChat())
 		m.viewport.GotoBottom()
 
@@ -384,6 +485,71 @@ func (m model) updateDialog(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// updatePicker handles input when the model picker overlay is active.
+func (m model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c":
+			m.quitting = true
+			return m, tea.Quit
+		case "esc":
+			// Close picker, return to chat
+			m.mode = modeChat
+			m.input.Focus()
+			return m, nil
+		case "enter":
+			// Select the current item
+			if item, ok := m.picker.SelectedItem().(modelItem); ok {
+				m.mode = modeChat
+				m.input.Focus()
+				m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Switching to " + item.Title() + "..."})
+				m.viewport.SetContent(m.renderChat())
+				cmds = append(cmds, doSetModel(m.client, item.provider, item.modelID))
+				return m, tea.Batch(cmds...)
+			}
+			m.mode = modeChat
+			m.input.Focus()
+			return m, nil
+		}
+	}
+
+	// Pass rpc events through
+	if ev, ok := msg.(rpcEventMsg); ok {
+		cmds = append(cmds, m.handleEvent(json.RawMessage(ev))...)
+		m.viewport.SetContent(m.renderChat())
+		cmds = append(cmds, waitForEvent(m.client))
+	}
+
+	// Toast expiration
+	if _, ok := msg.(toastExpireMsg); ok {
+		m.toast = ""
+		m.toastLevel = ""
+	}
+
+	// Spinner/stopwatch ticks
+	if tickMsg, ok := msg.(spinner.TickMsg); ok {
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(tickMsg)
+		cmds = append(cmds, cmd)
+	}
+	switch msg.(type) {
+	case stopwatch.TickMsg, stopwatch.StartStopMsg, stopwatch.ResetMsg:
+		var cmd tea.Cmd
+		m.stopwatch, cmd = m.stopwatch.Update(msg)
+		cmds = append(cmds, cmd)
+	}
+
+	// Update the list
+	var cmd tea.Cmd
+	m.picker, cmd = m.picker.Update(msg)
+	cmds = append(cmds, cmd)
+
+	return m, tea.Batch(cmds...)
+}
+
 // ---------------------------------------------------------------------------
 // View
 // ---------------------------------------------------------------------------
@@ -438,6 +604,8 @@ func (m model) View() string {
 	var inputArea string
 	if m.mode == modeDialog && m.dialog != nil {
 		inputArea = m.dialog.View()
+	} else if m.mode == modePicker {
+		inputArea = m.picker.View()
 	} else {
 		inputArea = m.input.View()
 	}
@@ -536,7 +704,7 @@ func (m *model) handleSlashCommand(text string) (tea.Cmd, bool) {
 		return nil, true
 
 	case "model":
-		return doCycleModel(m.client), true
+		return doFetchModels(m.client), true
 
 	case "new":
 		m.chatLog = nil
@@ -560,11 +728,35 @@ func (m *model) handleSlashCommand(text string) (tea.Cmd, bool) {
 		m.quitting = true
 		return tea.Quit, true
 
-	case "help":
-		m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Slash commands: /clear /model /new /compact /name <n> /quit /help\nKeys: " + keys.ShortHelp()[0].Help().Key})
+	case "export":
+		path := ""
+		if len(parts) > 1 {
+			path = parts[1]
+		}
+		m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Exporting session..."})
+		return doExportHTML(m.client, path), true
+
+	case "copy":
+		return doCopyLastMessage(m.client), true
+
+	case "session":
+		return doGetSessionStats(m.client), true
+
+	case "hotkeys":
+		helpText := "Keybindings:\n"
+		for _, group := range keys.FullHelp() {
+			for _, k := range group {
+				helpText += fmt.Sprintf("  %s — %s\n", k.Help().Key, k.Help().Desc)
+			}
+		}
+		m.chatLog = append(m.chatLog, chatEntry{role: "info", content: helpText})
 		return nil, true
 
-	case "login", "logout", "settings", "export", "share", "session", "tree", "fork", "resume":
+	case "help":
+		m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Slash commands: /clear /model /new /compact /name /export /copy /session /hotkeys /quit /help"})
+		return nil, true
+
+	case "login", "logout", "settings", "share", "fork", "resume":
 		m.chatLog = append(m.chatLog, chatEntry{role: "error", content: "/" + cmd + " is not yet supported in pi-charm"})
 		return nil, true
 	}
@@ -1068,6 +1260,39 @@ func doPrompt(client *rpc.Client, text string) tea.Cmd {
 	}
 }
 
+func doFetchModels(client *rpc.Client) tea.Cmd {
+	if client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		models, err := client.GetAvailableModels()
+		if err != nil {
+			return modelsListMsg{err: err}
+		}
+		return modelsListMsg{models: models}
+	}
+}
+
+func doSetModel(client *rpc.Client, provider, modelID string) tea.Cmd {
+	if client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		resp, err := client.Send(rpc.Command{
+			Type:     "set_model",
+			Provider: provider,
+			ModelID:  modelID,
+		})
+		if err != nil {
+			return setModelMsg{err: err}
+		}
+		if !resp.Success {
+			return setModelMsg{err: fmt.Errorf("%s", resp.Error)}
+		}
+		return setModelMsg{provider: provider, modelID: modelID}
+	}
+}
+
 func doCycleModel(client *rpc.Client) tea.Cmd {
 	if client == nil {
 		return nil
@@ -1136,6 +1361,75 @@ func doSetSessionName(client *rpc.Client, name string) tea.Cmd {
 			return errMsg{err}
 		}
 		return sessionNameMsg{name: name}
+	}
+}
+
+func doExportHTML(client *rpc.Client, path string) tea.Cmd {
+	if client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		resp, err := client.ExportHTML(path)
+		if err != nil {
+			return exportMsg{err: err}
+		}
+		if !resp.Success {
+			return exportMsg{err: fmt.Errorf("%s", resp.Error)}
+		}
+		var data struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(resp.Data, &data) == nil {
+			return exportMsg{path: data.Path}
+		}
+		return exportMsg{path: "exported"}
+	}
+}
+
+func doCopyLastMessage(client *rpc.Client) tea.Cmd {
+	if client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		resp, err := client.GetLastAssistantText()
+		if err != nil {
+			return copyMsg{err: err}
+		}
+		if !resp.Success {
+			return copyMsg{err: fmt.Errorf("%s", resp.Error)}
+		}
+		var data struct {
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(resp.Data, &data) == nil {
+			return copyMsg{text: data.Text}
+		}
+		return copyMsg{err: fmt.Errorf("no text")}
+	}
+}
+
+func doGetSessionStats(client *rpc.Client) tea.Cmd {
+	if client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		resp, err := client.GetSessionStats()
+		if err != nil {
+			return sessionStatsMsg{err: err}
+		}
+		if !resp.Success {
+			return sessionStatsMsg{err: fmt.Errorf("%s", resp.Error)}
+		}
+		var stats map[string]interface{}
+		if json.Unmarshal(resp.Data, &stats) == nil {
+			var parts []string
+			for k, v := range stats {
+				parts = append(parts, fmt.Sprintf("%s: %v", k, v))
+			}
+			sort.Strings(parts)
+			return sessionStatsMsg{stats: strings.Join(parts, " | ")}
+		}
+		return sessionStatsMsg{stats: string(resp.Data)}
 	}
 }
 
