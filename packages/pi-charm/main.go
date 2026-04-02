@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -91,8 +92,8 @@ type model struct {
 	chatLog       []chatEntry
 	streaming     bool
 	turnActive    bool
-	streamBuf     strings.Builder
-	thinkBuf      strings.Builder
+	streamBuf     *strings.Builder
+	thinkBuf      *strings.Builder
 	activeTools   map[string]string // toolCallId -> toolName
 	mode          uiMode
 	dialogReqID   string // pending extension_ui_request ID
@@ -151,6 +152,8 @@ func initialModel(client *rpc.Client) model {
 		spinner:     sp,
 		stopwatch:   sw,
 		help:        h,
+		streamBuf:   &strings.Builder{},
+		thinkBuf:    &strings.Builder{},
 		activeTools: make(map[string]string),
 		mode:        modeChat,
 	}
@@ -190,8 +193,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case key.Matches(msg, keys.Abort):
-			if m.streaming {
+			if m.streaming && m.client != nil {
 				_ = m.client.Abort()
+				m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Aborted"})
+				m.viewport.SetContent(m.renderChat())
+				m.viewport.GotoBottom()
+			} else if m.input.Value() != "" {
+				m.input.Reset()
 			}
 
 		case key.Matches(msg, keys.CycleModel):
@@ -209,13 +217,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				text := strings.TrimSpace(m.input.Value())
 				if text != "" {
 					m.input.Reset()
-					m.chatLog = append(m.chatLog, chatEntry{role: "user", content: text})
-					m.streaming = true
-					m.streamBuf.Reset()
-					m.thinkBuf.Reset()
-					m.viewport.SetContent(m.renderChat())
-					m.viewport.GotoBottom()
-					cmds = append(cmds, doPrompt(m.client, text))
+
+					// Handle built-in slash commands locally
+					if cmd, handled := m.handleSlashCommand(text); handled {
+						if cmd != nil {
+							cmds = append(cmds, cmd)
+						}
+						m.viewport.SetContent(m.renderChat())
+						m.viewport.GotoBottom()
+					} else {
+						m.chatLog = append(m.chatLog, chatEntry{role: "user", content: text})
+						m.streaming = true
+						m.streamBuf.Reset()
+						m.thinkBuf.Reset()
+						m.viewport.SetContent(m.renderChat())
+						m.viewport.GotoBottom()
+						cmds = append(cmds, doPrompt(m.client, text))
+					}
 				}
 			}
 		default:
@@ -267,6 +285,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.SetContent(m.renderChat())
 			m.viewport.GotoBottom()
 		}
+
+	case newSessionMsg:
+		m.chatLog = nil
+		m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "New session started"})
+		m.viewport.SetContent(m.renderChat())
+		m.viewport.GotoBottom()
+		cmds = append(cmds, fetchState(m.client))
+
+	case compactMsg:
+		if msg.err != nil {
+			m.chatLog = append(m.chatLog, chatEntry{role: "error", content: "Compact failed: " + msg.err.Error()})
+		} else {
+			m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Context compacted"})
+		}
+		m.viewport.SetContent(m.renderChat())
+		m.viewport.GotoBottom()
+
+	case sessionNameMsg:
+		m.sessionName = msg.name
+		m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Session named: " + msg.name})
+		m.viewport.SetContent(m.renderChat())
+		m.viewport.GotoBottom()
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -476,6 +516,64 @@ func dismissToast(d time.Duration) tea.Cmd {
 }
 
 // ---------------------------------------------------------------------------
+// Slash command handling
+// ---------------------------------------------------------------------------
+
+// handleSlashCommand intercepts built-in slash commands that RPC mode doesn't
+// handle. Returns (cmd, true) if handled, (nil, false) to pass through to pi.
+func (m *model) handleSlashCommand(text string) (tea.Cmd, bool) {
+	if !strings.HasPrefix(text, "/") {
+		return nil, false
+	}
+
+	parts := strings.Fields(text)
+	cmd := strings.TrimPrefix(parts[0], "/")
+
+	switch cmd {
+	case "clear":
+		m.chatLog = nil
+		m.viewport.SetContent("")
+		return nil, true
+
+	case "model":
+		return doCycleModel(m.client), true
+
+	case "new":
+		m.chatLog = nil
+		m.viewport.SetContent("")
+		m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Starting new session..."})
+		return doNewSession(m.client), true
+
+	case "compact":
+		m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Compacting..."})
+		return doCompact(m.client), true
+
+	case "name":
+		if len(parts) > 1 {
+			name := strings.Join(parts[1:], " ")
+			return doSetSessionName(m.client, name), true
+		}
+		m.chatLog = append(m.chatLog, chatEntry{role: "error", content: "Usage: /name <session name>"})
+		return nil, true
+
+	case "quit":
+		m.quitting = true
+		return tea.Quit, true
+
+	case "help":
+		m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Slash commands: /clear /model /new /compact /name <n> /quit /help\nKeys: " + keys.ShortHelp()[0].Help().Key})
+		return nil, true
+
+	case "login", "logout", "settings", "export", "share", "session", "tree", "fork", "resume":
+		m.chatLog = append(m.chatLog, chatEntry{role: "error", content: "/" + cmd + " is not yet supported in pi-charm"})
+		return nil, true
+	}
+
+	// Not a known built-in — pass through to pi (could be an extension command)
+	return nil, false
+}
+
+// ---------------------------------------------------------------------------
 // Event handling
 // ---------------------------------------------------------------------------
 
@@ -621,6 +719,7 @@ func (m *model) handleExtensionUI(req rpc.ExtensionUIRequest) []tea.Cmd {
 		).WithShowHelp(true).WithTheme(newHuhTheme())
 		m.dialog = form
 		m.mode = modeDialog
+		return []tea.Cmd{m.dialog.Init()}
 
 	case "confirm":
 		m.dialogReqID = req.ID
@@ -636,6 +735,7 @@ func (m *model) handleExtensionUI(req rpc.ExtensionUIRequest) []tea.Cmd {
 		).WithShowHelp(true).WithTheme(newHuhTheme())
 		m.dialog = form
 		m.mode = modeDialog
+		return []tea.Cmd{m.dialog.Init()}
 
 	case "input":
 		m.dialogReqID = req.ID
@@ -652,6 +752,7 @@ func (m *model) handleExtensionUI(req rpc.ExtensionUIRequest) []tea.Cmd {
 		).WithShowHelp(true).WithTheme(newHuhTheme())
 		m.dialog = form
 		m.mode = modeDialog
+		return []tea.Cmd{m.dialog.Init()}
 
 	case "editor":
 		m.dialogReqID = req.ID
@@ -669,10 +770,11 @@ func (m *model) handleExtensionUI(req rpc.ExtensionUIRequest) []tea.Cmd {
 		).WithShowHelp(true).WithTheme(newHuhTheme())
 		m.dialog = form
 		m.mode = modeDialog
+		return []tea.Cmd{m.dialog.Init()}
 
 	default:
 		// For unsupported methods (setWidget, setTitle, set_editor_text), cancel
-		if req.ID != "" {
+		if req.ID != "" && m.client != nil {
 			cancelled := true
 			_ = m.client.SendUIResponse(rpc.ExtensionUIResponse{
 				Type:      "extension_ui_response",
@@ -693,29 +795,31 @@ func (m *model) finishDialog(cancelled bool) {
 		return
 	}
 
-	if cancelled {
-		c := true
-		_ = m.client.SendUIResponse(rpc.ExtensionUIResponse{
-			Type:      "extension_ui_response",
-			ID:        m.dialogReqID,
-			Cancelled: &c,
-		})
-	} else {
-		// Try to get the value or confirmed status
-		val := m.dialog.GetString("value")
-		if val != "" {
-			_ = m.client.SendUIResponse(rpc.ExtensionUIResponse{
-				Type:  "extension_ui_response",
-				ID:    m.dialogReqID,
-				Value: val,
-			})
-		} else {
-			confirmed := m.dialog.GetBool("confirmed")
+	if m.client != nil {
+		if cancelled {
+			c := true
 			_ = m.client.SendUIResponse(rpc.ExtensionUIResponse{
 				Type:      "extension_ui_response",
 				ID:        m.dialogReqID,
-				Confirmed: &confirmed,
+				Cancelled: &c,
 			})
+		} else {
+			// Try to get the value or confirmed status
+			val := m.dialog.GetString("value")
+			if val != "" {
+				_ = m.client.SendUIResponse(rpc.ExtensionUIResponse{
+					Type:  "extension_ui_response",
+					ID:    m.dialogReqID,
+					Value: val,
+				})
+			} else {
+				confirmed := m.dialog.GetBool("confirmed")
+				_ = m.client.SendUIResponse(rpc.ExtensionUIResponse{
+					Type:      "extension_ui_response",
+					ID:        m.dialogReqID,
+					Confirmed: &confirmed,
+				})
+			}
 		}
 	}
 
@@ -745,7 +849,7 @@ func (m *model) getGlamour() *glamour.TermRenderer {
 func (m *model) renderChat() string {
 	th := m.theme
 	var sb strings.Builder
-	blockWidth := m.viewport.Width - 4 // account for border + padding
+	blockWidth := max(m.viewport.Width-4, 20)
 
 	for _, entry := range m.chatLog {
 		switch entry.role {
@@ -754,19 +858,19 @@ func (m *model) renderChat() string {
 			sb.WriteString(th.UserBlock.Width(blockWidth).Render(content) + "\n")
 
 		case "assistant":
-			var content string
-			label := th.AssistantLabel.Render("Pi") + "\n"
+			label := th.AssistantLabel.Render("Pi")
+			var body string
 			if r := m.getGlamour(); r != nil {
 				rendered, err := r.Render(entry.content)
 				if err == nil {
-					content = label + rendered
+					body = strings.TrimRight(rendered, "\n")
 				} else {
-					content = label + th.AssistantText.Render(entry.content)
+					body = th.AssistantText.Render(entry.content)
 				}
 			} else {
-				content = label + th.AssistantText.Render(entry.content)
+				body = th.AssistantText.Render(entry.content)
 			}
-			sb.WriteString(th.AssistantBlock.Width(blockWidth).Render(content) + "\n")
+			sb.WriteString(th.AssistantBlock.Width(blockWidth).Render(label + "\n" + body) + "\n")
 
 		case "thinking":
 			lines := strings.Split(entry.content, "\n")
@@ -817,20 +921,20 @@ func (m *model) renderChat() string {
 			sb.WriteString(th.ThinkingText.Render("thinking: "+last) + "\n")
 		}
 		if m.streamBuf.Len() > 0 {
-			label := th.AssistantLabel.Render("Pi") + "\n"
+			label := th.AssistantLabel.Render("Pi")
 			text := m.streamBuf.String()
-			var content string
+			var body string
 			if r := m.getGlamour(); r != nil {
 				rendered, err := r.Render(text)
 				if err == nil {
-					content = label + rendered
+					body = strings.TrimRight(rendered, "\n")
 				} else {
-					content = label + th.AssistantText.Render(text)
+					body = th.AssistantText.Render(text)
 				}
 			} else {
-				content = label + th.AssistantText.Render(text)
+				body = th.AssistantText.Render(text)
 			}
-			sb.WriteString(th.AssistantBlock.Width(blockWidth).Render(content) + "\n")
+			sb.WriteString(th.AssistantBlock.Width(blockWidth).Render(label + "\n" + body) + "\n")
 		}
 	}
 
@@ -917,6 +1021,9 @@ func summarizeToolResult(raw json.RawMessage) string {
 // ---------------------------------------------------------------------------
 
 func waitForEvent(client *rpc.Client) tea.Cmd {
+	if client == nil {
+		return nil
+	}
 	return func() tea.Msg {
 		raw, ok := <-client.Events()
 		if !ok {
@@ -927,6 +1034,9 @@ func waitForEvent(client *rpc.Client) tea.Cmd {
 }
 
 func waitForDone(client *rpc.Client) tea.Cmd {
+	if client == nil {
+		return nil
+	}
 	return func() tea.Msg {
 		<-client.Done()
 		return rpcDoneMsg{}
@@ -934,6 +1044,9 @@ func waitForDone(client *rpc.Client) tea.Cmd {
 }
 
 func fetchState(client *rpc.Client) tea.Cmd {
+	if client == nil {
+		return nil
+	}
 	return func() tea.Msg {
 		state, err := client.GetState()
 		if err != nil {
@@ -944,6 +1057,9 @@ func fetchState(client *rpc.Client) tea.Cmd {
 }
 
 func doPrompt(client *rpc.Client, text string) tea.Cmd {
+	if client == nil {
+		return nil
+	}
 	return func() tea.Msg {
 		if err := client.Prompt(text); err != nil {
 			return errMsg{err}
@@ -953,6 +1069,9 @@ func doPrompt(client *rpc.Client, text string) tea.Cmd {
 }
 
 func doCycleModel(client *rpc.Client) tea.Cmd {
+	if client == nil {
+		return nil
+	}
 	return func() tea.Msg {
 		resp, err := client.CycleModel()
 		if err != nil {
@@ -974,6 +1093,52 @@ func doCycleModel(client *rpc.Client) tea.Cmd {
 	}
 }
 
+type newSessionMsg struct{}
+type compactMsg struct{ err error }
+type sessionNameMsg struct{ name string }
+
+func doNewSession(client *rpc.Client) tea.Cmd {
+	if client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		_, err := client.NewSession()
+		if err != nil {
+			return errMsg{err}
+		}
+		return newSessionMsg{}
+	}
+}
+
+func doCompact(client *rpc.Client) tea.Cmd {
+	if client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		resp, err := client.Send(rpc.Command{Type: "compact"})
+		if err != nil {
+			return compactMsg{err: err}
+		}
+		if !resp.Success {
+			return compactMsg{err: fmt.Errorf("%s", resp.Error)}
+		}
+		return compactMsg{}
+	}
+}
+
+func doSetSessionName(client *rpc.Client, name string) tea.Cmd {
+	if client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		err := client.SendAsync(rpc.Command{Type: "set_session_name", Name: name})
+		if err != nil {
+			return errMsg{err}
+		}
+		return sessionNameMsg{name: name}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -981,7 +1146,26 @@ func doCycleModel(client *rpc.Client) tea.Cmd {
 func main() {
 	piPath := os.Getenv("PI_PATH")
 	if piPath == "" {
-		piPath = "pi"
+		// Try to find pi relative to this binary's location (monorepo sibling)
+		exe, _ := os.Executable()
+		if exe != "" {
+			candidate := filepath.Join(filepath.Dir(exe), "..", "coding-agent", "dist", "cli.js")
+			if _, err := os.Stat(candidate); err == nil {
+				piPath = "node " + candidate
+			}
+		}
+		// Try relative to cwd (running from packages/pi-charm/)
+		if piPath == "" {
+			candidate := filepath.Join("..", "coding-agent", "dist", "cli.js")
+			if abs, err := filepath.Abs(candidate); err == nil {
+				if _, err := os.Stat(abs); err == nil {
+					piPath = "node " + abs
+				}
+			}
+		}
+		if piPath == "" {
+			piPath = "pi"
+		}
 	}
 
 	cwd, _ := os.Getwd()

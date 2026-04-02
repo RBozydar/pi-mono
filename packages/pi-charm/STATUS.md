@@ -4,14 +4,16 @@
 
 ```
 pi-charm/
-├── main.go       Model/Update/View, event handling, chat rendering
-├── theme.go      Lip Gloss adaptive theme (light/dark detection)
-├── keys.go       Bubbles key.Binding definitions + help.KeyMap
-├── STATUS.md     This file
+├── main.go              Model/Update/View, event handling, chat rendering, toasts
+├── theme.go             Lip Gloss adaptive theme, message borders, toast styles, huh theme
+├── keys.go              Bubbles key.Binding definitions + help.KeyMap
+├── main_test.go         Unit tests (model, events, rendering, helpers)
+├── STATUS.md            This file
+├── SLASH-COMMANDS.md    Audit of built-in slash commands vs RPC availability
 ├── go.mod
 └── rpc/
-    ├── types.go  Go types mirroring Pi's RPC protocol
-    └── client.go Subprocess mgmt, JSONL framing, typed helpers
+    ├── types.go         Go types mirroring Pi's RPC protocol
+    └── client.go        Subprocess mgmt, JSONL framing, typed helpers
 ```
 
 ## Charmbracelet Usage
@@ -50,13 +52,16 @@ pi-charm/
 - [x] **Better tool rendering** — per-tool icons, prioritized arg display, compact results
 - [x] **RPC client helpers** — CycleModel, CycleThinkingLevel, Steer, NewSession, GetAvailableModels
 
+- [x] **Bubbles stopwatch** — turn duration timing in status bar
+- [x] **Lip Gloss message borders** — rounded borders on user/assistant blocks
+- [x] **Notification toasts** — transient overlays for setStatus/notify with auto-dismiss
+- [x] **Custom huh theme** — adaptive palette matching pi-charm theme
+
 ## Planned
 
 - [ ] Bubbles list for model picker overlay (Ctrl+Shift+P style)
 - [ ] Huh input for inline steer/follow-up during streaming
 - [ ] Bubbles progress for compaction/retry progress
-- [ ] Bubbles stopwatch for turn duration timing
-- [ ] Lip Gloss borders around message blocks
 - [ ] Lip Gloss table layout for structured tool args
 - [ ] Theme switching command (dark/light/custom JSON)
 - [ ] Slash command autocomplete in textarea
@@ -64,5 +69,3 @@ pi-charm/
 - [ ] Session tree navigation overlay
 - [ ] Expandable/collapsible tool output on click
 - [ ] Image rendering (iTerm2/Kitty inline protocol)
-- [ ] Notification toasts (extension setStatus/notify as transient overlays)
-- [ ] Custom huh theme matching pi-charm theme

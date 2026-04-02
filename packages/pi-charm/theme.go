@@ -196,11 +196,10 @@ func newTheme() Theme {
 	}
 }
 
-// newHuhTheme builds a huh form theme using the pi-charm adaptive color palette.
+// newHuhTheme builds a huh form theme using pi-charm's adaptive palette.
 func newHuhTheme() *huh.Theme {
 	t := huh.ThemeBase()
 
-	// Focused field styles — the active field in a form.
 	t.Focused.Base = t.Focused.Base.BorderForeground(subtle)
 	t.Focused.Card = t.Focused.Base
 	t.Focused.Title = t.Focused.Title.Foreground(accent).Bold(true)
@@ -214,7 +213,7 @@ func newHuhTheme() *huh.Theme {
 	t.Focused.PrevIndicator = t.Focused.PrevIndicator.Foreground(accent)
 	t.Focused.Option = t.Focused.Option.Foreground(text)
 	t.Focused.MultiSelectSelector = t.Focused.MultiSelectSelector.Foreground(accent)
-	t.Focused.SelectedOption = t.Focused.SelectedOption.Foreground(accent)
+	t.Focused.SelectedOption = t.Focused.SelectedOption.Foreground(green)
 	t.Focused.SelectedPrefix = lipgloss.NewStyle().Foreground(green).SetString("✓ ")
 	t.Focused.UnselectedPrefix = lipgloss.NewStyle().Foreground(dimText).SetString("• ")
 	t.Focused.UnselectedOption = t.Focused.UnselectedOption.Foreground(text)
@@ -222,34 +221,24 @@ func newHuhTheme() *huh.Theme {
 	t.Focused.Next = t.Focused.FocusedButton
 	t.Focused.BlurredButton = t.Focused.BlurredButton.Foreground(text).Background(bgDim)
 
-	t.Focused.TextInput.Cursor = t.Focused.TextInput.Cursor.Foreground(accent)
+	t.Focused.TextInput.Cursor = t.Focused.TextInput.Cursor.Foreground(green)
 	t.Focused.TextInput.Placeholder = t.Focused.TextInput.Placeholder.Foreground(subtle)
 	t.Focused.TextInput.Prompt = t.Focused.TextInput.Prompt.Foreground(accent)
 
-	// Blurred field styles — inactive fields use dimmer colors.
 	t.Blurred = t.Focused
 	t.Blurred.Base = t.Focused.Base.BorderStyle(lipgloss.HiddenBorder())
 	t.Blurred.Card = t.Blurred.Base
-	t.Blurred.Title = t.Blurred.Title.Foreground(dimText)
-	t.Blurred.NoteTitle = t.Blurred.NoteTitle.Foreground(dimText)
-	t.Blurred.Description = t.Blurred.Description.Foreground(subtle)
-	t.Blurred.TextInput.Prompt = t.Blurred.TextInput.Prompt.Foreground(dimText)
-	t.Blurred.TextInput.Text = t.Blurred.TextInput.Text.Foreground(dimText)
 	t.Blurred.NextIndicator = lipgloss.NewStyle()
 	t.Blurred.PrevIndicator = lipgloss.NewStyle()
 
-	// Group styles.
+	t.Help.ShortKey = lipgloss.NewStyle().Foreground(accent).Bold(true)
+	t.Help.ShortDesc = lipgloss.NewStyle().Foreground(dimText)
+	t.Help.ShortSeparator = lipgloss.NewStyle().Foreground(subtle)
+	t.Help.FullKey = lipgloss.NewStyle().Foreground(accent).Bold(true)
+	t.Help.FullDesc = lipgloss.NewStyle().Foreground(dimText)
+	t.Help.FullSeparator = lipgloss.NewStyle().Foreground(subtle)
+
 	t.Group.Title = t.Focused.Title
 	t.Group.Description = t.Focused.Description
-
-	// Help styles — match the pi-charm help bar.
-	t.Help.ShortKey = t.Help.ShortKey.Foreground(accent)
-	t.Help.ShortDesc = t.Help.ShortDesc.Foreground(dimText)
-	t.Help.ShortSeparator = t.Help.ShortSeparator.Foreground(subtle)
-	t.Help.FullKey = t.Help.FullKey.Foreground(accent)
-	t.Help.FullDesc = t.Help.FullDesc.Foreground(dimText)
-	t.Help.FullSeparator = t.Help.FullSeparator.Foreground(subtle)
-	t.Help.Ellipsis = t.Help.Ellipsis.Foreground(dimText)
-
 	return t
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -22,6 +23,9 @@ type Client struct {
 	mu       sync.Mutex
 	reqID    atomic.Int64
 	done     chan struct{}
+	wg       sync.WaitGroup
+
+	stderrMu  sync.Mutex
 	stderrBuf []byte
 }
 
@@ -30,7 +34,10 @@ type Client struct {
 // cwd is the working directory for the agent.
 func NewClient(piPath string, cwd string, extraArgs ...string) (*Client, error) {
 	args := append([]string{"--mode", "rpc"}, extraArgs...)
-	cmd := exec.Command(piPath, args...)
+
+	// Support compound commands like "node /path/to/cli.js"
+	parts := strings.Fields(piPath)
+	cmd := exec.Command(parts[0], append(parts[1:], args...)...)
 	cmd.Dir = cwd
 
 	stdin, err := cmd.StdinPipe()
@@ -60,6 +67,7 @@ func NewClient(piPath string, cwd string, extraArgs ...string) (*Client, error) 
 		return nil, fmt.Errorf("start pi: %w", err)
 	}
 
+	c.wg.Add(2)
 	go c.readStdout()
 	go c.readStderr()
 
@@ -123,11 +131,19 @@ func (c *Client) SendAsync(cmd Command) error {
 
 	data, err := json.Marshal(cmd)
 	if err != nil {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+		close(ch)
 		return fmt.Errorf("marshal command: %w", err)
 	}
 	data = append(data, '\n')
 
 	if _, err := c.stdin.Write(data); err != nil {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+		close(ch)
 		return fmt.Errorf("write command: %w", err)
 	}
 	return nil
@@ -213,15 +229,18 @@ func (c *Client) GetAvailableModels() ([]ModelInfo, error) {
 	return data.Models, nil
 }
 
-// Close terminates the pi process.
+// Close terminates the pi process and waits for goroutines to finish.
 func (c *Client) Close() error {
 	c.stdin.Close()
-	return c.cmd.Wait()
+	err := c.cmd.Wait()
+	c.wg.Wait()
+	return err
 }
 
 // readStdout reads JSONL from pi's stdout, routing responses to pending
 // requests and everything else to the events channel.
 func (c *Client) readStdout() {
+	defer c.wg.Done()
 	defer close(c.done)
 	defer close(c.events)
 
@@ -264,11 +283,7 @@ func (c *Client) readStdout() {
 		// Everything else is an event — send raw JSON
 		raw := make(json.RawMessage, len(line))
 		copy(raw, line)
-		select {
-		case c.events <- raw:
-		default:
-			// Drop if consumer is too slow (avoid blocking the reader)
-		}
+		c.events <- raw
 	}
 
 	// Close all pending requests
@@ -281,11 +296,17 @@ func (c *Client) readStdout() {
 }
 
 func (c *Client) readStderr() {
+	defer c.wg.Done()
+	const maxStderr = 64 * 1024 // cap at 64KB
 	buf := make([]byte, 4096)
 	for {
 		n, err := c.stderr.Read(buf)
 		if n > 0 {
-			c.stderrBuf = append(c.stderrBuf, buf[:n]...)
+			c.stderrMu.Lock()
+			if len(c.stderrBuf) < maxStderr {
+				c.stderrBuf = append(c.stderrBuf, buf[:n]...)
+			}
+			c.stderrMu.Unlock()
 		}
 		if err != nil {
 			return
