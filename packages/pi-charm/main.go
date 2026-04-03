@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
 
 	"github.com/rbw/pi-charm/rpc"
 )
@@ -67,9 +68,33 @@ func (i modelItem) Title() string       { return i.provider + "/" + i.modelID }
 func (i modelItem) Description() string { return i.provider }
 func (i modelItem) FilterValue() string { return i.provider + "/" + i.modelID }
 
+// forkItem implements list.Item for the fork message picker.
+type forkItem struct {
+	entryID string
+	text    string
+}
+
+func (i forkItem) Title() string {
+	t := i.text
+	if len(t) > 60 {
+		t = t[:57] + "..."
+	}
+	return t
+}
+func (i forkItem) Description() string { return i.entryID }
+func (i forkItem) FilterValue() string { return i.text }
+
 type commandsMsg struct {
 	cmds []slashCmd
 	err  error
+}
+
+type forkMessagesMsg struct {
+	messages []rpc.ForkMessage
+	err      error
+}
+type forkResultMsg struct {
+	err error
 }
 
 type exportMsg struct {
@@ -107,9 +132,10 @@ type chatEntry struct {
 type uiMode int
 
 const (
-	modeChat   uiMode = iota // normal chat input
-	modeDialog               // extension UI dialog overlay
-	modePicker               // model picker overlay
+	modeChat       uiMode = iota // normal chat input
+	modeDialog                   // extension UI dialog overlay
+	modePicker                   // model picker overlay
+	modeForkPicker               // fork message picker overlay
 )
 
 // ---------------------------------------------------------------------------
@@ -121,13 +147,14 @@ type model struct {
 	theme  Theme
 
 	// Components
-	viewport  viewport.Model
-	input     textarea.Model
-	spinner   spinner.Model
-	stopwatch stopwatch.Model
-	help      help.Model
-	dialog    *huh.Form  // active extension UI dialog, if any
-	picker    list.Model // model picker list
+	viewport   viewport.Model
+	input      textarea.Model
+	spinner    spinner.Model
+	stopwatch  stopwatch.Model
+	help       help.Model
+	dialog     *huh.Form  // active extension UI dialog, if any
+	picker     list.Model // model picker list
+	forkPicker list.Model // fork message picker list
 
 	// Layout
 	width, height int
@@ -250,6 +277,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// If the model picker is active, route messages there
 	if m.mode == modePicker {
 		return m.updatePicker(msg)
+	}
+
+	// If the fork picker is active, route messages there
+	if m.mode == modeForkPicker {
+		return m.updateForkPicker(msg)
 	}
 
 	switch msg := msg.(type) {
@@ -508,6 +540,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.SetContent(m.renderChat())
 		m.viewport.GotoBottom()
 
+	case forkMessagesMsg:
+		if msg.err != nil {
+			m.chatLog = append(m.chatLog, chatEntry{role: "error", content: "Fork failed: " + msg.err.Error()})
+			m.viewport.SetContent(m.renderChat())
+			m.viewport.GotoBottom()
+		} else if len(msg.messages) == 0 {
+			m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "No messages to fork from"})
+			m.viewport.SetContent(m.renderChat())
+			m.viewport.GotoBottom()
+		} else {
+			items := make([]list.Item, len(msg.messages))
+			for i, fm := range msg.messages {
+				items[i] = forkItem{entryID: fm.EntryID, text: fm.Text}
+			}
+			m.forkPicker = list.New(items, list.NewDefaultDelegate(), m.width-4, m.height-6)
+			m.forkPicker.Title = "Fork from message"
+			m.forkPicker.SetFilteringEnabled(true)
+			m.mode = modeForkPicker
+		}
+
+	case forkResultMsg:
+		if msg.err != nil {
+			m.chatLog = append(m.chatLog, chatEntry{role: "error", content: "Fork failed: " + msg.err.Error()})
+		} else {
+			m.chatLog = nil
+			m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Forked to new branch"})
+			cmds = append(cmds, fetchState(m.client))
+		}
+		m.viewport.SetContent(m.renderChat())
+		m.viewport.GotoBottom()
+
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -649,6 +712,64 @@ func (m model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// updateForkPicker handles input when the fork message picker overlay is active.
+func (m model) updateForkPicker(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c":
+			m.quitting = true
+			return m, tea.Quit
+		case "esc":
+			m.mode = modeChat
+			m.input.Focus()
+			return m, nil
+		case "enter":
+			if item, ok := m.forkPicker.SelectedItem().(forkItem); ok {
+				m.mode = modeChat
+				m.input.Focus()
+				m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Forking from: " + item.Title() + "..."})
+				m.viewport.SetContent(m.renderChat())
+				cmds = append(cmds, doFork(m.client, item.entryID))
+				return m, tea.Batch(cmds...)
+			}
+			m.mode = modeChat
+			m.input.Focus()
+			return m, nil
+		}
+	}
+
+	// Pass rpc events through
+	if ev, ok := msg.(rpcEventMsg); ok {
+		cmds = append(cmds, m.handleEvent(json.RawMessage(ev))...)
+		m.viewport.SetContent(m.renderChat())
+		cmds = append(cmds, waitForEvent(m.client))
+	}
+	if _, ok := msg.(toastExpireMsg); ok {
+		m.toast = ""
+		m.toastLevel = ""
+	}
+	if tickMsg, ok := msg.(spinner.TickMsg); ok {
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(tickMsg)
+		cmds = append(cmds, cmd)
+	}
+	switch msg.(type) {
+	case stopwatch.TickMsg, stopwatch.StartStopMsg, stopwatch.ResetMsg:
+		var cmd tea.Cmd
+		m.stopwatch, cmd = m.stopwatch.Update(msg)
+		cmds = append(cmds, cmd)
+	}
+
+	var cmd tea.Cmd
+	m.forkPicker, cmd = m.forkPicker.Update(msg)
+	cmds = append(cmds, cmd)
+
+	return m, tea.Batch(cmds...)
+}
+
 // ---------------------------------------------------------------------------
 // View
 // ---------------------------------------------------------------------------
@@ -712,6 +833,8 @@ func (m model) View() string {
 		inputArea = m.dialog.View()
 	} else if m.mode == modePicker {
 		inputArea = m.picker.View()
+	} else if m.mode == modeForkPicker {
+		inputArea = m.forkPicker.View()
 	} else {
 		inputArea = m.input.View()
 	}
@@ -821,6 +944,7 @@ var slashCommands = []slashCmd{
 	{"name", "Set session name"},
 	{"export", "Export session to HTML"},
 	{"copy", "Copy last assistant message"},
+	{"fork", "Fork session from a message"},
 	{"session", "Show session stats"},
 	{"hotkeys", "Show keyboard shortcuts"},
 	{"quit", "Quit pi-charm"},
@@ -893,10 +1017,13 @@ func (m *model) handleSlashCommand(text string) (tea.Cmd, bool) {
 		return nil, true
 
 	case "help":
-		m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Slash commands: /clear /model /new /compact /name /export /copy /session /hotkeys /quit /help"})
+		m.chatLog = append(m.chatLog, chatEntry{role: "info", content: "Slash commands: /clear /model /new /compact /name /fork /export /copy /session /hotkeys /quit /help"})
 		return nil, true
 
-	case "login", "logout", "settings", "share", "fork", "resume":
+	case "fork":
+		return doFetchForkMessages(m.client), true
+
+	case "login", "logout", "settings", "share", "resume":
 		m.chatLog = append(m.chatLog, chatEntry{role: "error", content: "/" + cmd + " is not yet supported in pi-charm"})
 		return nil, true
 	}
@@ -1301,12 +1428,9 @@ func (m *model) renderChat() string {
 			}
 			sb.WriteString(th.ToolRunning.Render(line) + "\n")
 			if m.toolsExpanded && entry.fullArgs != nil {
-				var pretty interface{}
-				if json.Unmarshal(entry.fullArgs, &pretty) == nil {
-					formatted, err := json.MarshalIndent(pretty, "    ", "  ")
-					if err == nil {
-						sb.WriteString(th.ToolBox.Render(string(formatted)) + "\n")
-					}
+				tableStr := renderToolArgsTable(entry.fullArgs, th, blockWidth-4)
+				if tableStr != "" {
+					sb.WriteString(tableStr + "\n")
 				}
 			}
 
@@ -1410,6 +1534,43 @@ func toolIcon(name string) string {
 	}
 }
 
+// renderToolArgsTable renders tool args as a styled two-column table.
+func renderToolArgsTable(raw json.RawMessage, th Theme, maxWidth int) string {
+	var args map[string]interface{}
+	if json.Unmarshal(raw, &args) != nil {
+		return ""
+	}
+
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	rows := make([][]string, 0, len(keys))
+	for _, k := range keys {
+		val := fmt.Sprintf("%v", args[k])
+		if len(val) > 80 {
+			val = val[:77] + "..."
+		}
+		rows = append(rows, []string{k, val})
+	}
+
+	t := table.New().
+		Border(lipgloss.NormalBorder()).
+		BorderStyle(lipgloss.NewStyle().Foreground(subtle)).
+		Width(maxWidth).
+		StyleFunc(func(row, col int) lipgloss.Style {
+			if col == 0 {
+				return th.ToolName.Width(12)
+			}
+			return th.ToolArg
+		}).
+		Rows(rows...)
+
+	return t.Render()
+}
+
 // summarizeToolArgs extracts a compact summary from tool call args.
 func summarizeToolArgs(raw json.RawMessage) string {
 	if raw == nil {
@@ -1462,6 +1623,35 @@ func summarizeToolResult(raw json.RawMessage) string {
 // ---------------------------------------------------------------------------
 // Tea commands (async)
 // ---------------------------------------------------------------------------
+
+func doFetchForkMessages(client *rpc.Client) tea.Cmd {
+	if client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		msgs, err := client.GetForkMessages()
+		if err != nil {
+			return forkMessagesMsg{err: err}
+		}
+		return forkMessagesMsg{messages: msgs}
+	}
+}
+
+func doFork(client *rpc.Client, entryID string) tea.Cmd {
+	if client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		resp, err := client.Fork(entryID)
+		if err != nil {
+			return forkResultMsg{err: err}
+		}
+		if !resp.Success {
+			return forkResultMsg{err: fmt.Errorf("%s", resp.Error)}
+		}
+		return forkResultMsg{}
+	}
+}
 
 func doFetchCommands(client *rpc.Client) tea.Cmd {
 	if client == nil {

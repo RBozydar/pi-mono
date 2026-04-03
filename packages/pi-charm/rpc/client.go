@@ -234,6 +234,29 @@ func (c *Client) GetAvailableModels() ([]ModelInfo, error) {
 	return data.Models, nil
 }
 
+// GetForkMessages returns user messages available for forking.
+func (c *Client) GetForkMessages() ([]ForkMessage, error) {
+	resp, err := c.Send(Command{Type: "get_fork_messages"})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get_fork_messages: %s", resp.Error)
+	}
+	var data struct {
+		Messages []ForkMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(resp.Data, &data); err != nil {
+		return nil, fmt.Errorf("unmarshal fork messages: %w", err)
+	}
+	return data.Messages, nil
+}
+
+// Fork creates a new fork from the given entry.
+func (c *Client) Fork(entryID string) (*Response, error) {
+	return c.Send(Command{Type: "fork", EntryID: entryID})
+}
+
 // ExportHTML exports the session to an HTML file.
 func (c *Client) ExportHTML(outputPath string) (*Response, error) {
 	return c.Send(Command{Type: "export_html", OutputPath: outputPath})

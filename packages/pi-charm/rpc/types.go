@@ -184,6 +184,12 @@ type ContentBlock struct {
 	Input    json.RawMessage `json:"input,omitempty"`
 }
 
+// ForkMessage represents a user message available for forking.
+type ForkMessage struct {
+	EntryID string `json:"entryId"`
+	Text    string `json:"text"`
+}
+
 // ExtensionUIResponse is sent back to pi when an extension requests UI input.
 type ExtensionUIResponse struct {
 	Type      string `json:"type"` // always "extension_ui_response"
