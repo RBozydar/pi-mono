@@ -4,10 +4,13 @@
 
 ### Added
 
+- Added a top-level `web-ui-extension/` coding-agent extension that serves a localhost browser UI backed by SDK runtime sessions, with parallel sessions, slash commands, settings/tree panels, global extension loading, extension UI dialogs, light/dark themes, and responsive layout.
 - Added `ctx.ui.setWorkingVisible()` so extensions can hide the built-in interactive working loader row without reserving layout space, plus a border-status editor example that moves working state into a custom editor border ([#3674](https://github.com/badlogic/pi-mono/issues/3674))
 
 ### Fixed
 
+- Fixed the web UI extension to honor `--web-ui-host` and `--web-ui-port` during startup and show LAN URLs when bound to all interfaces.
+- Fixed the web UI extension to flush live assistant updates immediately instead of coalescing fast streams into only the final message.
 - Fixed extension `pi.setSessionName()` updates to refresh the interactive terminal title immediately ([#3686](https://github.com/badlogic/pi-mono/issues/3686))
 - Fixed `/tree` cancellation via `session_before_tree` leaving the session stuck in compaction state ([#3688](https://github.com/badlogic/pi-mono/issues/3688))
 - Fixed Escape interrupt handling when extensions hide the built-in working loader row ([#3674](https://github.com/badlogic/pi-mono/issues/3674))

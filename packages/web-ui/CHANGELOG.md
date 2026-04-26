@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `npm run check` for the web UI package to typecheck against workspace source files when package declaration output has not been built.
+
 ## [0.70.2] - 2026-04-24
 
 ## [0.70.1] - 2026-04-24

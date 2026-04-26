@@ -2,6 +2,10 @@
 
 Example extensions for pi-coding-agent.
 
+The browser web UI extension lives at the repository root in
+[`web-ui-extension/`](../../../../web-ui-extension) so it can be managed as a
+standalone extension.
+
 ## Usage
 
 ```bash
