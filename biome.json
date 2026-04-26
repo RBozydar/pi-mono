@@ -31,6 +31,7 @@
 			"web-ui-extension/**/*.ts",
 			"packages/web-ui/src/**/*.ts",
 			"packages/web-ui/example/**/*.ts",
+			"!.claude/worktrees/**/*",
 			"!**/node_modules/**/*",
 			"!**/test-sessions.ts",
 			"!**/models.generated.ts",
