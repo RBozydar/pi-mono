@@ -1,0 +1,16 @@
+{
+	"name": "@earendil-works/pi-coding-agent-web",
+	"version": "0.75.5",
+	"description": "Browser web UI for the Pi coding agent runtime",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"start": "tsx src/cli.ts"
+	},
+	"dependencies": {
+		"@earendil-works/pi-coding-agent": "^0.75.5"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	}
+}

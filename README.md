@@ -52,6 +52,7 @@ I regularly publish my own `pi-mono` work sessions here:
 | **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
 | **[@earendil-works/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
 | **[@earendil-works/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
+| **[@earendil-works/pi-coding-agent-web](packages/coding-agent-web)** | Browser UI for the coding agent runtime |
 | **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
 
 For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
@@ -68,6 +69,7 @@ npm run build        # Build all packages
 npm run check        # Lint, format, and type check
 ./test.sh            # Run tests (skips LLM-dependent tests without API keys)
 ./pi-test.sh         # Run pi from sources (can be run from any directory)
+npm --prefix packages/coding-agent-web run start -- --host 0.0.0.0 --port 32123 --auth-token
 ```
 
 ## Supply-chain hardening

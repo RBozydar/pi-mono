@@ -93,6 +93,22 @@ pi
 /login  # Then select provider
 ```
 
+## Web UI From Source
+
+The monorepo includes a browser UI in [`../coding-agent-web`](../coding-agent-web). It uses the same SDK runtime as the CLI, including bash/read/edit/write tools, configured extensions, MCP-backed extensions, skills, slash commands, persistent sessions, model registry, and tree/fork operations.
+
+Run it from the repo root:
+
+```bash
+npm --prefix packages/coding-agent-web run start
+```
+
+LAN-accessible:
+
+```bash
+npm --prefix packages/coding-agent-web run start -- --host 0.0.0.0 --port 32123 --auth-token
+```
+
 Then just talk to pi. By default, pi gives the model four tools: `read`, `write`, `edit`, and `bash`. The model uses these to fulfill your requests. Add capabilities via [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [pi packages](#pi-packages).
 
 **Platform notes:** [Windows](docs/windows.md) | [Termux (Android)](docs/termux.md) | [tmux](docs/tmux.md) | [Terminal setup](docs/terminal-setup.md) | [Shell aliases](docs/shell-aliases.md)
